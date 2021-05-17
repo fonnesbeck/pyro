@@ -31,7 +31,7 @@ def _guess_max_plate_nesting(model, args, kwargs):
 
 
 def _predictive_sequential(model, posterior_samples, model_args, model_kwargs,
-                           num_samples, return_site_shapes, return_trace=False):
+                           num_samples, sample_sites, return_trace=False):
     collected = []
     samples = [{k: v[i] for k, v in posterior_samples.items()} for i in range(num_samples)]
     for i in range(num_samples):
@@ -39,13 +39,10 @@ def _predictive_sequential(model, posterior_samples, model_args, model_kwargs,
         if return_trace:
             collected.append(trace)
         else:
-            collected.append({site: trace.nodes[site]['value'] for site in return_site_shapes})
+            collected.append({site: trace.nodes[site]['value'] for site in sample_sites})
 
-    if return_trace:
-        return collected
-    else:
-        return {site: torch.stack([s[site] for s in collected]).reshape(shape)
-                for site, shape in return_site_shapes.items()}
+    return collected if return_trace else {site: torch.stack([s[site] for s in collected])
+                                           for site in sample_sites}
 
 
 def _predictive(model, posterior_samples, num_samples, return_sites=(),
@@ -68,8 +65,7 @@ def _predictive(model, posterior_samples, num_samples, return_sites=(),
 
     return_site_shapes = {}
     for site in model_trace.stochastic_nodes + model_trace.observation_nodes:
-        append_ndim = max_plate_nesting - len(model_trace.nodes[site]["fn"].batch_shape)
-        site_shape = (num_samples,) + (1,) * append_ndim + model_trace.nodes[site]['value'].shape
+        site_shape = (num_samples,) + model_trace.nodes[site]['value'].shape
         # non-empty return-sites
         if return_sites:
             if site in return_sites:
@@ -90,7 +86,7 @@ def _predictive(model, posterior_samples, num_samples, return_sites=(),
 
     if not parallel:
         return _predictive_sequential(model, posterior_samples, model_args, model_kwargs, num_samples,
-                                      return_site_shapes, return_trace=False)
+                                      return_site_shapes.keys(), return_trace=False)
 
     trace = poutine.trace(poutine.condition(vectorize(model), reshaped_samples))\
         .get_trace(*model_args, **model_kwargs)
